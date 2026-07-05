@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>배전 선로 부하율 대시보드</title>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --surface-1:      #fcfcfb;
+    --surface-2:      #ffffff;
+    --page-plane:     #f4f5f7;
+    --text-primary:   #10151c;
+    --text-secondary: #52586a;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+
+    --navy-900: #0f1b33;
+    --navy-800: #16264a;
+    --navy-700: #1c3159;
+    --navy-600: #24406f;
+    --accent-ink: #1c3159;
+
+    --status-critical: #d03b3b;
+    --status-critical-wash: rgba(208,59,59,0.08);
+    --status-warning: #eda100;
+
+    --series-1: #2a78d6;
+    --series-2: #1baf7a;
+    --series-3: #eda100;
+    --series-4: #008300;
+    --series-5: #4a3aa7;
+    --series-6: #e34948;
+    --series-7: #e87ba4;
+    --series-8: #eb6834;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1:      #1a1a19;
+      --surface-2:      #212220;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+
+      --navy-900: #0a1220;
+      --navy-800: #101c33;
+      --navy-700: #16264a;
+      --navy-600: #1c3159;
+      --accent-ink: #7fb0f2;
+
+      --status-critical: #e66767;
+      --status-critical-wash: rgba(230,103,103,0.12);
+      --status-warning: #c98500;
+
+      --series-1: #3987e5;
+      --series-2: #199e70;
+      --series-3: #c98500;
+      --series-4: #008300;
+      --series-5: #9085e9;
+      --series-6: #e66767;
+      --series-7: #d55181;
+      --series-8: #d95926;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    font-variant-numeric: proportional-nums;
+  }
+
+  header.app-header {
+    background: linear-gradient(135deg, var(--navy-900), var(--navy-700));
+    color: #ffffff;
+    padding: 28px 32px;
+  }
+  header.app-header h1 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header.app-header p {
+    margin: 0;
+    font-size: 13px;
+    color: rgba(255,255,255,0.72);
+  }
+
+  main {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+  }
+
+  .card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  /* Upload panel */
+  .upload-panel {
+    padding: 18px 20px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--navy-800);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .upload-btn:hover { background: var(--navy-700); }
+  .upload-panel input[type="file"] { display: none; }
+  .upload-meta {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+    min-width: 200px;
+  }
+  .upload-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .error-banner {
+    display: none;
+    background: var(--status-critical-wash);
+    color: var(--status-critical);
+    border: 1px solid var(--status-critical);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .error-banner.show { display: block; }
+
+  .empty-state {
+    padding: 64px 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+
+  /* Stat cards */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    padding: 18px 20px;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text-primary);
+  }
+  .stat-value.critical { color: var(--status-critical); }
+  .stat-sub {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Filter row */
+  .filter-panel {
+    padding: 14px 20px;
+    margin-bottom: 20px;
+  }
+  .filter-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .filter-panel-head h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .toggle-all-btn {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    background: none;
+    border: 1px solid var(--baseline);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .toggle-all-btn:hover { background: var(--page-plane); }
+  .chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 140px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 5px 10px 5px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--baseline);
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-secondary);
+    background: var(--surface-1);
+  }
+  .chip.active {
+    color: #fff;
+    border-color: transparent;
+  }
+  .chip .swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--baseline);
+    flex-shrink: 0;
+  }
+  .chip.active .swatch { background: #fff; }
+
+  /* Chart card */
+  .chart-card {
+    padding: 20px 20px 8px;
+    margin-bottom: 20px;
+  }
+  .chart-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chart-card-head h2 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .chart-card-head .legend-note {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .chart-wrap {
+    position: relative;
+    height: 420px;
+  }
+
+  /* Table toggle */
+  .table-toggle-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+  }
+  .table-toggle-btn {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    background: var(--surface-1);
+    border: 1px solid var(--baseline);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .table-wrap {
+    display: none;
+    padding: 4px 20px 20px;
+    overflow-x: auto;
+  }
+  .table-wrap.show { display: block; }
+  table.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  table.data-table th, table.data-table td {
+    padding: 7px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--gridline);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  table.data-table th:nth-child(1), table.data-table td:nth-child(1),
+  table.data-table th:nth-child(2), table.data-table td:nth-child(2) {
+    text-align: left;
+    font-variant-numeric: normal;
+  }
+  table.data-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+  }
+  table.data-table td.over-threshold {
+    color: var(--status-critical);
+    font-weight: 700;
+  }
+
+  @media (max-width: 720px) {
+    .stat-row { grid-template-columns: 1fr; }
+    main { padding: 20px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>배전 선로 시간대별 부하율 대시보드</h1>
+  <p>선로 CSV를 업로드하면 시간대별 부하율 추이와 과부하 구간을 확인할 수 있습니다.</p>
+</header>
+
+<main>
+  <div class="upload-panel card">
+    <label class="upload-btn" for="csv-input">
+      CSV 파일 업로드
+    </label>
+    <input type="file" id="csv-input" accept=".csv,text/csv">
+    <div class="upload-meta" id="upload-meta">아직 업로드된 파일이 없습니다.</div>
+    <div class="upload-hint">필수 컬럼: 선로ID, 지사, 정격용량_kW, 시간, 부하_kW, 부하율_%</div>
+  </div>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <div id="empty-state" class="empty-state card">
+    CSV 파일을 업로드하면 여기에 시간대별 부하율 차트와 요약 지표가 표시됩니다.
+  </div>
+
+  <div id="dashboard" style="display:none;">
+    <div class="stat-row">
+      <div class="card stat-card">
+        <div class="stat-label">최대 부하율</div>
+        <div class="stat-value" id="stat-max-value">-</div>
+        <div class="stat-sub" id="stat-max-sub">-</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">피크 발생 시간대</div>
+        <div class="stat-value" id="stat-peak-time">-</div>
+        <div class="stat-sub" id="stat-peak-sub">-</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">90% 초과 선로 수</div>
+        <div class="stat-value" id="stat-over-count">-</div>
+        <div class="stat-sub" id="stat-over-sub">전체 표시 선로 기준</div>
+      </div>
+    </div>
+
+    <div class="card filter-panel">
+      <div class="filter-panel-head">
+        <h2>선로 필터</h2>
+        <button class="toggle-all-btn" id="toggle-all-btn" type="button">전체 해제</button>
+      </div>
+      <div class="chip-list" id="chip-list"></div>
+    </div>
+
+    <div class="card chart-card">
+      <div class="chart-card-head">
+        <h2>시간대별 부하율 추이</h2>
+        <span class="legend-note">점선: 90% 경고 기준선 · 빨간 점: 90% 이상 구간</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="load-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="table-toggle-row">
+      <button class="table-toggle-btn" id="table-toggle-btn" type="button">표로 보기</button>
+    </div>
+    <div class="card table-wrap" id="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>선로ID</th>
+            <th>지사</th>
+            <th>시간</th>
+            <th>정격용량(kW)</th>
+            <th>부하(kW)</th>
+            <th>부하율(%)</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var REQUIRED_COLUMNS = ["선로ID", "지사", "정격용량_kW", "시간", "부하_kW", "부하율_%"];
+  var THRESHOLD = 90;
+  var SERIES_COLORS = [
+    "--series-1", "--series-2", "--series-3", "--series-4",
+    "--series-5", "--series-6", "--series-7", "--series-8"
+  ];
+  var DASH_PATTERNS = [[], [6, 3], [2, 2], [8, 3, 2, 3]];
+
+  var state = {
+    rows: [],
+    lineIds: [],
+    lineMeta: {},
+    timeLabels: [],
+    selected: new Set(),
+    chart: null
+  };
+
+  var fileInput = document.getElementById("csv-input");
+  var uploadMeta = document.getElementById("upload-meta");
+  var errorBanner = document.getElementById("error-banner");
+  var emptyState = document.getElementById("empty-state");
+  var dashboard = document.getElementById("dashboard");
+  var chipList = document.getElementById("chip-list");
+  var toggleAllBtn = document.getElementById("toggle-all-btn");
+  var tableToggleBtn = document.getElementById("table-toggle-btn");
+  var tableWrap = document.getElementById("table-wrap");
+  var tableBody = document.getElementById("table-body");
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.classList.add("show");
+  }
+  function clearError() {
+    errorBanner.textContent = "";
+    errorBanner.classList.remove("show");
+  }
+
+  function toNumber(v) {
+    if (v === null || v === undefined) return NaN;
+    var s = String(v).trim().replace(/,/g, "");
+    if (s === "") return NaN;
+    return Number(s);
+  }
+
+  fileInput.addEventListener("change", function (e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    clearError();
+    uploadMeta.textContent = "\"" + file.name + "\" 파싱 중...";
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      encoding: "UTF-8",
+      transformHeader: function (h) { return h.trim().replace(/^﻿/, ""); },
+      complete: function (results) {
+        try {
+          handleParsed(results, file.name);
+        } catch (err) {
+          showError("CSV 처리 중 오류가 발생했습니다: " + err.message);
+          uploadMeta.textContent = "\"" + file.name + "\" 처리 실패";
+        }
+      },
+      error: function (err) {
+        showError("CSV 파일을 읽는 중 오류가 발생했습니다: " + err.message);
+        uploadMeta.textContent = "\"" + file.name + "\" 처리 실패";
+      }
+    });
+  });
+
+  function handleParsed(results, fileName) {
+    var fields = (results.meta && results.meta.fields) || [];
+    var missing = REQUIRED_COLUMNS.filter(function (c) { return fields.indexOf(c) === -1; });
+    if (missing.length) {
+      showError("CSV에 필수 컬럼이 없습니다: " + missing.join(", "));
+      uploadMeta.textContent = "\"" + fileName + "\" 처리 실패 (컬럼 누락)";
+      return;
+    }
+
+    var rows = [];
+    var lineMeta = {};
+    var timeSet = {};
+
+    results.data.forEach(function (r) {
+      var id = (r["선로ID"] || "").toString().trim();
+      var branch = (r["지사"] || "").toString().trim();
+      var time = (r["시간"] || "").toString().trim();
+      if (!id || !time) return;
+
+      var capacity = toNumber(r["정격용량_kW"]);
+      var load = toNumber(r["부하_kW"]);
+      var ratio = toNumber(r["부하율_%"]);
+      if (isNaN(ratio)) return;
+
+      rows.push({
+        lineId: id,
+        branch: branch,
+        capacity: isNaN(capacity) ? null : capacity,
+        time: time,
+        load: isNaN(load) ? null : load,
+        ratio: ratio
+      });
+
+      if (!lineMeta[id]) lineMeta[id] = { branch: branch, capacity: capacity };
+      timeSet[time] = true;
+    });
+
+    if (!rows.length) {
+      showError("유효한 데이터 행을 찾지 못했습니다. CSV 내용을 확인해주세요.");
+      uploadMeta.textContent = "\"" + fileName + "\" 처리 실패 (데이터 없음)";
+      return;
+    }
+
+    var lineIds = Object.keys(lineMeta).sort(function (a, b) {
+      var ba = lineMeta[a].branch, bb = lineMeta[b].branch;
+      if (ba !== bb) return ba < bb ? -1 : 1;
+      return a < b ? -1 : (a > b ? 1 : 0);
+    });
+
+    var timeLabels = Object.keys(timeSet).sort();
+
+    state.rows = rows;
+    state.lineMeta = lineMeta;
+    state.lineIds = lineIds;
+    state.timeLabels = timeLabels;
+    state.selected = new Set(lineIds);
+
+    uploadMeta.textContent = "\"" + fileName + "\" · 선로 " + lineIds.length + "개 · 레코드 " + rows.length + "건";
+    emptyState.style.display = "none";
+    dashboard.style.display = "block";
+
+    buildChips();
+    renderAll();
+  }
+
+  function buildChips() {
+    chipList.innerHTML = "";
+    state.lineIds.forEach(function (id, idx) {
+      var meta = state.lineMeta[id];
+      var colorVar = SERIES_COLORS[idx % SERIES_COLORS.length];
+      var chip = document.createElement("div");
+      chip.className = "chip active";
+      chip.dataset.lineId = id;
+
+      var swatch = document.createElement("span");
+      swatch.className = "swatch";
+      chip.appendChild(swatch);
+
+      var label = document.createElement("span");
+      label.textContent = id + (meta.branch ? " (" + meta.branch + ")" : "");
+      chip.appendChild(label);
+
+      chip.style.setProperty("--chip-color", "var(" + colorVar + ")");
+      applyChipStyle(chip, true, colorVar);
+
+      chip.addEventListener("click", function () {
+        var active = chip.classList.toggle("active");
+        applyChipStyle(chip, active, colorVar);
+        if (active) state.selected.add(id); else state.selected.delete(id);
+        updateToggleAllLabel();
+        renderAll();
+      });
+
+      chipList.appendChild(chip);
+    });
+    updateToggleAllLabel();
+  }
+
+  function applyChipStyle(chip, active, colorVar) {
+    if (active) {
+      chip.style.background = "var(" + colorVar + ")";
+      chip.style.borderColor = "transparent";
+    } else {
+      chip.style.background = "var(--surface-1)";
+      chip.style.borderColor = "var(--baseline)";
+    }
+  }
+
+  function updateToggleAllLabel() {
+    var allOn = state.selected.size === state.lineIds.length;
+    toggleAllBtn.textContent = allOn ? "전체 해제" : "전체 선택";
+  }
+
+  toggleAllBtn.addEventListener("click", function () {
+    var allOn = state.selected.size === state.lineIds.length;
+    var chips = chipList.querySelectorAll(".chip");
+    if (allOn) {
+      state.selected.clear();
+      chips.forEach(function (chip, idx) {
+        chip.classList.remove("active");
+        applyChipStyle(chip, false, SERIES_COLORS[idx % SERIES_COLORS.length]);
+      });
+    } else {
+      state.selected = new Set(state.lineIds);
+      chips.forEach(function (chip, idx) {
+        chip.classList.add("active");
+        applyChipStyle(chip, true, SERIES_COLORS[idx % SERIES_COLORS.length]);
+      });
+    }
+    updateToggleAllLabel();
+    renderAll();
+  });
+
+  tableToggleBtn.addEventListener("click", function () {
+    var show = tableWrap.classList.toggle("show");
+    tableToggleBtn.textContent = show ? "표 숨기기" : "표로 보기";
+    if (show) renderTable();
+  });
+
+  function getSelectedRows() {
+    return state.rows.filter(function (r) { return state.selected.has(r.lineId); });
+  }
+
+  function renderAll() {
+    renderStats();
+    renderChart();
+    if (tableWrap.classList.contains("show")) renderTable();
+  }
+
+  function renderStats() {
+    var rows = getSelectedRows();
+    var maxEl = document.getElementById("stat-max-value");
+    var maxSubEl = document.getElementById("stat-max-sub");
+    var peakEl = document.getElementById("stat-peak-time");
+    var peakSubEl = document.getElementById("stat-peak-sub");
+    var overEl = document.getElementById("stat-over-count");
+    var overSubEl = document.getElementById("stat-over-sub");
+
+    if (!rows.length) {
+      maxEl.textContent = "-"; maxSubEl.textContent = "표시할 선로가 없습니다";
+      peakEl.textContent = "-"; peakSubEl.textContent = "-";
+      overEl.textContent = "-"; overSubEl.textContent = "-";
+      maxEl.classList.remove("critical");
+      overEl.classList.remove("critical");
+      return;
+    }
+
+    var maxRow = rows[0];
+    rows.forEach(function (r) { if (r.ratio > maxRow.ratio) maxRow = r; });
+
+    maxEl.textContent = maxRow.ratio.toFixed(1) + "%";
+    maxEl.classList.toggle("critical", maxRow.ratio >= THRESHOLD);
+    maxSubEl.textContent = maxRow.lineId + (maxRow.branch ? " · " + maxRow.branch : "") + " · " + maxRow.time;
+
+    peakEl.textContent = maxRow.time;
+    peakSubEl.textContent = "해당 시간대 최대 부하율 기준";
+
+    var overLines = new Set();
+    rows.forEach(function (r) { if (r.ratio >= THRESHOLD) overLines.add(r.lineId); });
+    overEl.textContent = overLines.size + " / " + state.selected.size;
+    overEl.classList.toggle("critical", overLines.size > 0);
+    overSubEl.textContent = "부하율 " + THRESHOLD + "% 이상 도달한 선로 수";
+  }
+
+  function renderTable() {
+    var rows = getSelectedRows().slice().sort(function (a, b) {
+      if (a.lineId !== b.lineId) return a.lineId < b.lineId ? -1 : 1;
+      return a.time < b.time ? -1 : (a.time > b.time ? 1 : 0);
+    });
+    tableBody.innerHTML = "";
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      [
+        r.lineId,
+        r.branch,
+        r.time,
+        r.capacity !== null ? r.capacity.toLocaleString() : "-",
+        r.load !== null ? r.load.toLocaleString() : "-",
+        r.ratio.toFixed(1)
+      ].forEach(function (val, i) {
+        var td = document.createElement("td");
+        td.textContent = val;
+        if (i === 5 && r.ratio >= THRESHOLD) td.classList.add("over-threshold");
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    tableBody.appendChild(frag);
+  }
+
+  var thresholdLinePlugin = {
+    id: "thresholdLine",
+    beforeDatasetsDraw: function (chart) {
+      var scales = chart.scales;
+      var yScale = scales.y, xScale = scales.x;
+      if (!yScale || yScale.max <= THRESHOLD) return;
+      var ctx = chart.ctx;
+      var top = yScale.getPixelForValue(yScale.max);
+      var yThresh = yScale.getPixelForValue(THRESHOLD);
+      ctx.save();
+      ctx.fillStyle = cssVar("--status-critical-wash");
+      ctx.fillRect(xScale.left, top, xScale.right - xScale.left, yThresh - top);
+      ctx.restore();
+    },
+    afterDatasetsDraw: function (chart) {
+      var scales = chart.scales;
+      var yScale = scales.y, xScale = scales.x;
+      if (!yScale) return;
+      var y = yScale.getPixelForValue(THRESHOLD);
+      var ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = cssVar("--status-critical");
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(xScale.left, y);
+      ctx.lineTo(xScale.right, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.font = "600 11px system-ui, sans-serif";
+      ctx.fillStyle = cssVar("--status-critical");
+      ctx.textBaseline = "bottom";
+      ctx.fillText("경고 기준선 " + THRESHOLD + "%", xScale.left + 6, y - 4);
+      ctx.restore();
+    }
+  };
+
+  function renderChart() {
+    var labels = state.timeLabels;
+    var selectedIds = state.lineIds.filter(function (id) { return state.selected.has(id); });
+
+    var maxRatio = THRESHOLD;
+    state.rows.forEach(function (r) { if (r.ratio > maxRatio) maxRatio = r.ratio; });
+    var suggestedMax = Math.max(100, Math.ceil((maxRatio + 5) / 10) * 10);
+
+    var datasets = selectedIds.map(function (id) {
+      var idx = state.lineIds.indexOf(id);
+      var colorVar = SERIES_COLORS[idx % SERIES_COLORS.length];
+      var color = cssVar(colorVar);
+      var dash = DASH_PATTERNS[Math.floor(idx / SERIES_COLORS.length) % DASH_PATTERNS.length];
+      var meta = state.lineMeta[id];
+
+      var byTime = {};
+      state.rows.forEach(function (r) { if (r.lineId === id) byTime[r.time] = r.ratio; });
+      var data = labels.map(function (t) {
+        return byTime.hasOwnProperty(t) ? byTime[t] : null;
+      });
+
+      return {
+        label: id + (meta.branch ? " (" + meta.branch + ")" : ""),
+        data: data,
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 2,
+        borderDash: dash,
+        spanGaps: true,
+        pointRadius: function (ctx) {
+          var v = ctx.raw;
+          return (typeof v === "number" && v >= THRESHOLD) ? 5 : 3;
+        },
+        pointBackgroundColor: function (ctx) {
+          var v = ctx.raw;
+          return (typeof v === "number" && v >= THRESHOLD) ? cssVar("--status-critical") : color;
+        },
+        pointBorderColor: cssVar("--surface-2"),
+        pointBorderWidth: 1.5,
+        pointHoverRadius: 6,
+        tension: 0.15
+      };
+    });
+
+    var ctx = document.getElementById("load-chart").getContext("2d");
+
+    if (state.chart) {
+      state.chart.data.labels = labels;
+      state.chart.data.datasets = datasets;
+      state.chart.options.scales.y.suggestedMax = suggestedMax;
+      state.chart.update();
+      return;
+    }
+
+    state.chart = new Chart(ctx, {
+      type: "line",
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            grid: { color: cssVar("--gridline"), drawTicks: false },
+            ticks: { color: cssVar("--text-muted"), font: { size: 11 }, maxRotation: 0, autoSkip: true, autoSkipPadding: 8 },
+            border: { color: cssVar("--baseline") },
+            title: { display: true, text: "시간", color: cssVar("--text-secondary"), font: { size: 12 } }
+          },
+          y: {
+            beginAtZero: true,
+            suggestedMax: suggestedMax,
+            grid: { color: cssVar("--gridline"), drawTicks: false },
+            ticks: { color: cssVar("--text-muted"), font: { size: 11 }, callback: function (v) { return v + "%"; } },
+            border: { color: cssVar("--baseline") },
+            title: { display: true, text: "부하율 (%)", color: cssVar("--text-secondary"), font: { size: 12 } }
+          }
+        },
+        plugins: {
+          legend: {
+            position: "top",
+            align: "start",
+            labels: {
+              color: cssVar("--text-secondary"),
+              usePointStyle: true,
+              boxWidth: 24,
+              font: { size: 11.5 },
+              generateLabels: function (chart) {
+                return chart.data.datasets.map(function (ds, i) {
+                  return {
+                    text: ds.label,
+                    strokeStyle: ds.borderColor,
+                    fillStyle: ds.borderColor,
+                    lineWidth: 2,
+                    lineDash: ds.borderDash || [],
+                    pointStyle: "line",
+                    hidden: !chart.isDatasetVisible(i),
+                    datasetIndex: i
+                  };
+                });
+              }
+            }
+          },
+          tooltip: {
+            backgroundColor: cssVar("--navy-900"),
+            titleColor: "#ffffff",
+            bodyColor: "#ffffff",
+            borderColor: cssVar("--border"),
+            borderWidth: 1,
+            padding: 10,
+            titleFont: { size: 12, weight: "700" },
+            bodyFont: { size: 12 },
+            callbacks: {
+              title: function (items) {
+                return items.length ? "시간 " + items[0].label : "";
+              },
+              label: function (item) {
+                var v = item.raw;
+                if (v === null || v === undefined) return item.dataset.label + ": -";
+                return item.dataset.label + ": " + v.toFixed(1) + "%";
+              }
+            }
+          }
+        }
+      },
+      plugins: [thresholdLinePlugin]
+    });
+  }
+})();
+</script>
+</body>
+</html>
