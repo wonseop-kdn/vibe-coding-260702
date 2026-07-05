@@ -280,6 +280,86 @@ License: MIT
   }
   .chip.active .swatch { background: #fff; }
 
+  .filter-panel-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .threshold-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+  .threshold-control input[type="number"] {
+    width: 56px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    border: 1px solid var(--baseline);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .threshold-control input[type="number"]:focus {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 1px;
+  }
+
+  /* Ranking card */
+  .ranking-card {
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .ranking-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ranking-card-head h2 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .ranking-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .ranking-controls select {
+    font-size: 12.5px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--baseline);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .ranking-table-wrap {
+    overflow-x: auto;
+  }
+  table.ranking-table th:nth-child(3), table.ranking-table td:nth-child(3) {
+    text-align: left;
+    font-variant-numeric: normal;
+  }
+  table.ranking-table td:nth-child(1) {
+    text-align: center;
+    color: var(--text-muted);
+  }
+  table.ranking-table td.empty-row {
+    text-align: center;
+    color: var(--text-muted);
+  }
+
   /* Chart card */
   .chart-card {
     padding: 20px 20px 8px;
@@ -400,7 +480,7 @@ License: MIT
         <div class="stat-sub" id="stat-peak-sub">-</div>
       </div>
       <div class="card stat-card">
-        <div class="stat-label">90% 초과 선로 수</div>
+        <div class="stat-label">임계값 초과 선로 수</div>
         <div class="stat-value" id="stat-over-count">-</div>
         <div class="stat-sub" id="stat-over-sub">전체 표시 선로 기준</div>
       </div>
@@ -409,15 +489,51 @@ License: MIT
     <div class="card filter-panel">
       <div class="filter-panel-head">
         <h2>선로 필터</h2>
-        <button class="toggle-all-btn" id="toggle-all-btn" type="button">전체 해제</button>
+        <div class="filter-panel-controls">
+          <label class="threshold-control" for="threshold-input">
+            경고 기준선
+            <input type="number" id="threshold-input" min="1" max="300" step="1" value="90">
+            <span>%</span>
+          </label>
+          <button class="toggle-all-btn" id="toggle-all-btn" type="button">전체 해제</button>
+        </div>
       </div>
       <div class="chip-list" id="chip-list"></div>
+    </div>
+
+    <div class="card ranking-card">
+      <div class="ranking-card-head">
+        <h2>부하율 상위 선로</h2>
+        <div class="ranking-controls">
+          <label for="ranking-n-select">표시 개수</label>
+          <select id="ranking-n-select">
+            <option value="5">Top 5</option>
+            <option value="10" selected>Top 10</option>
+            <option value="20">Top 20</option>
+            <option value="all">전체</option>
+          </select>
+        </div>
+      </div>
+      <div class="ranking-table-wrap">
+        <table class="data-table ranking-table">
+          <thead>
+            <tr>
+              <th>순위</th>
+              <th>선로ID</th>
+              <th>지사</th>
+              <th>최대 부하율(%)</th>
+              <th>발생 시간</th>
+            </tr>
+          </thead>
+          <tbody id="ranking-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card chart-card">
       <div class="chart-card-head">
         <h2>시간대별 부하율 추이</h2>
-        <span class="legend-note">점선: 90% 경고 기준선 · 빨간 점: 90% 이상 구간</span>
+        <span class="legend-note" id="legend-note">점선: 90% 경고 기준선 · 빨간 점: 90% 이상 구간</span>
       </div>
       <div class="chart-wrap">
         <canvas id="load-chart"></canvas>
@@ -476,6 +592,10 @@ License: MIT
   var tableToggleBtn = document.getElementById("table-toggle-btn");
   var tableWrap = document.getElementById("table-wrap");
   var tableBody = document.getElementById("table-body");
+  var thresholdInput = document.getElementById("threshold-input");
+  var legendNoteEl = document.getElementById("legend-note");
+  var rankingBody = document.getElementById("ranking-body");
+  var rankingNSelect = document.getElementById("ranking-n-select");
 
   function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -662,14 +782,75 @@ License: MIT
     if (show) renderTable();
   });
 
+  function updateThresholdTexts() {
+    legendNoteEl.textContent = "점선: " + THRESHOLD + "% 경고 기준선 · 빨간 점: " + THRESHOLD + "% 이상 구간";
+  }
+
+  thresholdInput.addEventListener("change", function () {
+    var v = Math.round(Number(thresholdInput.value));
+    if (isNaN(v)) v = 90;
+    v = Math.min(300, Math.max(1, v));
+    thresholdInput.value = v;
+    THRESHOLD = v;
+    updateThresholdTexts();
+    renderAll();
+  });
+
+  rankingNSelect.addEventListener("change", function () {
+    renderRanking();
+  });
+
+  updateThresholdTexts();
+
   function getSelectedRows() {
     return state.rows.filter(function (r) { return state.selected.has(r.lineId); });
   }
 
   function renderAll() {
     renderStats();
+    renderRanking();
     renderChart();
     if (tableWrap.classList.contains("show")) renderTable();
+  }
+
+  function renderRanking() {
+    var rows = getSelectedRows();
+    var maxByLine = {};
+    rows.forEach(function (r) {
+      var cur = maxByLine[r.lineId];
+      if (!cur || r.ratio > cur.ratio) maxByLine[r.lineId] = r;
+    });
+    var ranked = Object.keys(maxByLine).map(function (id) { return maxByLine[id]; });
+    ranked.sort(function (a, b) { return b.ratio - a.ratio; });
+
+    var nVal = rankingNSelect.value;
+    var top = nVal === "all" ? ranked : ranked.slice(0, parseInt(nVal, 10));
+
+    rankingBody.innerHTML = "";
+    var frag = document.createDocumentFragment();
+
+    if (!top.length) {
+      var emptyTr = document.createElement("tr");
+      var emptyTd = document.createElement("td");
+      emptyTd.colSpan = 5;
+      emptyTd.className = "empty-row";
+      emptyTd.textContent = "표시할 선로가 없습니다";
+      emptyTr.appendChild(emptyTd);
+      frag.appendChild(emptyTr);
+    } else {
+      top.forEach(function (r, i) {
+        var tr = document.createElement("tr");
+        [(i + 1) + "", r.lineId, r.branch, r.ratio.toFixed(1), r.time].forEach(function (val, ci) {
+          var td = document.createElement("td");
+          td.textContent = val;
+          if (ci === 3 && r.ratio >= THRESHOLD) td.classList.add("over-threshold");
+          tr.appendChild(td);
+        });
+        frag.appendChild(tr);
+      });
+    }
+
+    rankingBody.appendChild(frag);
   }
 
   function renderStats() {
